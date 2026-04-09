@@ -840,31 +840,26 @@ class LongTermMemory(BaseMemory[Entity]):
 
         return relationship
 
-    async def _link_fact_to_entities(self, fact: Fact) -> None:
-        """Link a fact to entities matching its subject and object."""
-        for entity_name in (fact.subject, fact.object):
-            try:
-                await self._client.execute_write(
-                    queries.LINK_FACT_TO_ENTITY,
-                    {"fact_id": str(fact.id), "entity_name": entity_name},
-                )
-            except Exception:
-                # Entity may not exist — that's expected
-                pass
+    async def delete_fact(self, fact_id: str) -> bool:
+        """Delete a fact and its relationships by ID."""
+        results = await self._client.execute_write(
+            queries.DELETE_FACT, {"id": fact_id}
+        )
+        return bool(results)
 
-    async def _link_preference_to_entities(self, pref: Preference) -> None:
-        """Link a preference to entities mentioned in its text."""
-        text = f"{pref.category} {pref.preference}"
-        if pref.context:
-            text += f" {pref.context}"
-        try:
-            await self._client.execute_write(
-                queries.LINK_PREFERENCE_TO_ENTITIES_BY_TEXT,
-                {"preference_id": str(pref.id), "text": text},
-            )
-        except Exception:
-            # No matching entities — that's expected
-            pass
+    async def delete_preference(self, preference_id: str) -> bool:
+        """Delete a preference and its relationships by ID."""
+        results = await self._client.execute_write(
+            queries.DELETE_PREFERENCE, {"id": preference_id}
+        )
+        return bool(results)
+
+    async def delete_entity(self, entity_id: str) -> bool:
+        """Delete an entity and its relationships by ID."""
+        results = await self._client.execute_write(
+            queries.DELETE_ENTITY, {"id": entity_id}
+        )
+        return bool(results)
 
     async def get_entity_by_name(self, name: str) -> Entity | None:
         """
