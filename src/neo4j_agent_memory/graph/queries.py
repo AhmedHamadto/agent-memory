@@ -352,12 +352,32 @@ RETURN r
 GET_FACTS_BY_SUBJECT = """
 MATCH (f:Fact)
 WHERE f.subject = $subject
+  AND (f.valid_from IS NULL OR f.valid_from <= datetime())
+  AND (f.valid_until IS NULL OR f.valid_until >= datetime())
+RETURN f
+ORDER BY f.confidence DESC, f.created_at DESC
+LIMIT $limit
+"""
+
+GET_FACTS_BY_SUBJECT_WITH_EXPIRED = """
+MATCH (f:Fact)
+WHERE f.subject = $subject
 RETURN f
 ORDER BY f.confidence DESC, f.created_at DESC
 LIMIT $limit
 """
 
 SEARCH_FACTS_BY_EMBEDDING = """
+CALL db.index.vector.queryNodes('fact_embedding_idx', $limit, $embedding)
+YIELD node, score
+WHERE score >= $threshold
+  AND (node.valid_from IS NULL OR node.valid_from <= datetime())
+  AND (node.valid_until IS NULL OR node.valid_until >= datetime())
+RETURN node AS f, score
+ORDER BY score DESC
+"""
+
+SEARCH_FACTS_BY_EMBEDDING_WITH_EXPIRED = """
 CALL db.index.vector.queryNodes('fact_embedding_idx', $limit, $embedding)
 YIELD node, score
 WHERE score >= $threshold
