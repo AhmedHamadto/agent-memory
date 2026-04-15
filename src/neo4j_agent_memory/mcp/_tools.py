@@ -293,6 +293,7 @@ def _register_core_tools(mcp: FastMCP) -> None:
         client = get_client(ctx)
 
         try:
+            # Query 1: Node counts and integrity metrics
             records = await client.graph.execute_read(
                 """
                 OPTIONAL MATCH (entity:Entity)
@@ -305,18 +306,15 @@ def _register_core_tools(mcp: FastMCP) -> None:
                 WITH entities, facts, preferences, count(msg) AS messages
                 OPTIONAL MATCH (trace:ReasoningTrace)
                 WITH entities, facts, preferences, messages, count(trace) AS traces
-                OPTIONAL MATCH ()-[about:ABOUT]->()
-                WITH entities, facts, preferences, messages, traces,
-                     count(about) AS about_rels
                 OPTIONAL MATCH (of:Fact) WHERE NOT (of)-[:ABOUT]->()
                 WITH entities, facts, preferences, messages, traces,
-                     about_rels, count(of) AS orphaned_facts
+                     count(of) AS orphaned_facts
                 OPTIONAL MATCH (op:Preference) WHERE NOT (op)-[:ABOUT]->()
                 WITH entities, facts, preferences, messages, traces,
-                     about_rels, orphaned_facts, count(op) AS orphaned_prefs
+                     orphaned_facts, count(op) AS orphaned_prefs
                 OPTIONAL MATCH (ne:Entity) WHERE ne.embedding IS NULL
                 RETURN entities, facts, preferences, messages, traces,
-                       about_rels, orphaned_facts, orphaned_prefs,
+                       orphaned_facts, orphaned_prefs,
                        count(ne) AS no_embedding
                 """,
                 {},
@@ -326,6 +324,21 @@ def _register_core_tools(mcp: FastMCP) -> None:
                 return json.dumps({"error": "empty result"})
 
             r = records[0]
+
+            # Query 2: Dynamic relationship type enumeration
+            rel_records = await client.graph.execute_read(
+                """
+                MATCH ()-[r]->()
+                RETURN type(r) AS rel_type, count(r) AS count
+                ORDER BY count DESC
+                """,
+                {},
+            )
+
+            relationships: dict[str, int] = {}
+            for rel_row in rel_records:
+                relationships[rel_row["rel_type"]] = rel_row["count"]
+
             return json.dumps(
                 {
                     "nodes": {
@@ -335,9 +348,7 @@ def _register_core_tools(mcp: FastMCP) -> None:
                         "messages": r["messages"],
                         "traces": r["traces"],
                     },
-                    "relationships": {
-                        "ABOUT": r["about_rels"],
-                    },
+                    "relationships": relationships,
                     "integrity": {
                         "orphaned_facts": r["orphaned_facts"],
                         "orphaned_preferences": r["orphaned_prefs"],

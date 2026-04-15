@@ -671,16 +671,16 @@ class MemoryClient:
         # Fetch long-term memory graph
         if "long_term" in memory_types:
             try:
-                results = await self._client.execute_read(
+                # Step 1: Fetch all entities
+                entity_results = await self._client.execute_read(
                     """
                     MATCH (e:Entity)
                     WITH e LIMIT $limit
-                    OPTIONAL MATCH (e)-[r:RELATED_TO]-(e2:Entity)
-                    RETURN e, r, e2
+                    RETURN e
                     """,
                     {"limit": limit},
                 )
-                for row in results:
+                for row in entity_results:
                     entity = dict(row["e"])
 
                     if entity.get("id") and entity["id"] not in node_ids_seen:
@@ -696,31 +696,61 @@ class MemoryClient:
                         )
                         node_ids_seen.add(entity["id"])
 
-                    if row.get("r") and row.get("e2"):
-                        e2 = dict(row["e2"])
-                        if e2.get("id") and e2["id"] not in node_ids_seen:
-                            props = {k: v for k, v in e2.items() if v is not None}
-                            if not include_embeddings:
-                                props.pop("embedding", None)
-                            all_nodes.append(
-                                GraphNode(
-                                    id=e2["id"],
-                                    labels=["Entity"],
-                                    properties=props,
-                                )
-                            )
-                            node_ids_seen.add(e2["id"])
-
-                        rel = dict(row["r"])
+                # Step 2: Fetch all directed entity-to-entity relationships
+                # Uses directed match (->)  so each edge appears exactly once
+                rel_results = await self._client.execute_read(
+                    """
+                    MATCH (e1:Entity)-[r]->(e2:Entity)
+                    RETURN e1.id AS from_id, e2.id AS to_id,
+                           type(r) AS rel_type, properties(r) AS rel_props
+                    """,
+                    {},
+                )
+                for row in rel_results:
+                    from_id = row["from_id"]
+                    to_id = row["to_id"]
+                    if from_id and to_id:
+                        rel_type = row["rel_type"]
+                        rel_props = row.get("rel_props") or {}
+                        # For legacy RELATED_TO edges with a type property,
+                        # surface the stored type name
+                        if rel_type == "RELATED_TO" and rel_props.get("type"):
+                            rel_type = rel_props["type"]
                         all_relationships.append(
                             GraphRelationship(
-                                id=f"{entity['id']}->{e2['id']}",
-                                type=rel.get("type", "RELATED_TO"),
-                                from_node=entity["id"],
-                                to_node=e2["id"],
+                                id=f"{from_id}->{to_id}:{rel_type}",
+                                type=rel_type,
+                                from_node=from_id,
+                                to_node=to_id,
                                 properties={
-                                    k: v for k, v in rel.items() if k != "type" and v is not None
+                                    k: v
+                                    for k, v in rel_props.items()
+                                    if k != "type" and v is not None
                                 },
+                            )
+                        )
+
+                # Step 3: Fetch ABOUT relationships (Fact/Preference -> Entity)
+                about_results = await self._client.execute_read(
+                    """
+                    MATCH (n)-[r:ABOUT]->(e:Entity)
+                    WHERE n:Fact OR n:Preference
+                    RETURN n.id AS from_id, e.id AS to_id,
+                           labels(n) AS from_labels
+                    """,
+                    {},
+                )
+                for row in about_results:
+                    from_id = row["from_id"]
+                    to_id = row["to_id"]
+                    if from_id and to_id:
+                        all_relationships.append(
+                            GraphRelationship(
+                                id=f"{from_id}->{to_id}:ABOUT",
+                                type="ABOUT",
+                                from_node=from_id,
+                                to_node=to_id,
+                                properties={},
                             )
                         )
             except Exception:
